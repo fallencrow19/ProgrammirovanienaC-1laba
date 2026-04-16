@@ -1,92 +1,81 @@
-name: CI/CD Pipeline
+name: 'C++ CI'
 
-# Запуск по тегу (v1.0.0, v2.1.0 и т.д.) или вручную
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+    branches:
+      - lab1
 
 jobs:
-  # 1️⃣ Создание релиза на GitHub
   create_release:
     runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    permissions: write-all
     steps:
-      - name: Create Draft Release
+      - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          draft: true
-          prerelease: false
+        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.run_number}}
+          release_name: Release ${{ github.run_number }}
+          draft: false
+          prerelease: false
 
-  # 2️⃣ Сборка и упаковка для Linux Ubuntu
   release_assets_ubuntu:
     needs: create_release
     runs-on: ubuntu-latest
+    permissions: write-all
     steps:
-      - name: Checkout code
+      - name: Use Checkout
         uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: sudo apt update && sudo apt install -y build-essential cmake libboost-test-dev
-
-      - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build project
-        run: cmake --build build --config Release
-
-      - name: Package with CPack
-        working-directory: build
-        run: cpack -G TGZ
-
-      - name: Upload Linux Asset
-        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          files: build/*.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          submodules: true
+      
+      - name: Build Project
+        run: |
+          sudo apt-get update && sudo apt-get install libboost-test-dev -y
+          cmake . -DPATCH_VERSION=${{ github.run_number }}
+          cmake --build .
+          cmake --build . --target test
+          cmake --build . --target package
 
-  # 3️⃣ Сборка и упаковка для Windows (MSVC + vcpkg)
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN}}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url}}
+          asset_name: helloworld-0.0.${{ github.run_number }}-Linux.deb
+          asset_path: ./helloworld-0.0.${{ github.run_number }}-Linux.deb
+          asset_content_type: application/vnd.debian.binary-package
+
   release_assets_win:
     needs: create_release
     runs-on: windows-latest
+    permissions: write-all
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup vcpkg
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git
-          cd vcpkg
-          ./bootstrap-vcpkg.bat
-
-      - name: Install Boost via vcpkg
-        run: ./vcpkg/vcpkg install boost-test:x64-windows
-
-      - name: Configure CMake with MSVC & vcpkg
-        run: >
-          cmake -B build 
-          -DCMAKE_BUILD_TYPE=Release 
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake 
-          -DVCPKG_TARGET_TRIPLET=x64-windows
-
-      - name: Build project
-        run: cmake --build build --config Release
-
-      - name: Package with CPack
-        working-directory: build
-        run: cpack -G ZIP
-
-      - name: Upload Windows Asset
-        uses: softprops/action-gh-release@v2
+      - name: Use Checkout
+        uses: actions/checkout@v3
         with:
-          tag_name: ${{ github.ref_name }}
-          files: build/*.zip
+          submodules: true
+        
+      - name: Build Project
+        run: |
+          cmake --preset=vcpkg
+          cmake . -DPATCH_VERSION=${{ github.run_number }}
+          cmake --build build
+          cmake --build . --target package
+
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: ./helloworld-0.0.${{ github.run_number }}-win64.zip
+          asset_name: helloworld-0.0.${{ github.run_number }}-win64.zip
+          asset_content_type: application/zip
